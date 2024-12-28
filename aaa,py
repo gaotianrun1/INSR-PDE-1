@@ -1,0 +1,4 @@
+import PIL
+print(PIL.__version__)
+
+from PIL.Image import Resampling

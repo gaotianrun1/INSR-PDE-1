@@ -2,29 +2,31 @@ import os
 import argparse
 import json
 import shutil
-
+import pdb
 
 class Config(object):
-    """Base class of Config, provide necessary hyperparameters. 
+    """
+    Base class of Config, provide necessary hyperparameters. 
     """
     def __init__(self, phase='train'):
         self.is_train = phase == "train"
 
-        # init hyperparameters and parse from command-line
+        # init hyperparameters and parse from command-line 初始化并解析命令行参数，返回解析器和参数对象
         parser, args = self.parse()
 
-        # set as attributes
+        # set as attributes 打印所有的实验配置参数并将它们设置为类的属性
         print("----Experiment Configuration-----")
         for k, v in args.__dict__.items():
             print("{0:20}".format(k), v)
             self.__setattr__(k, v)
 
         # experiment paths
+        # pdb.set_trace()
         self.exp_dir = os.path.join(self.proj_dir, self.tag)
         self.log_dir = os.path.join(self.exp_dir, 'log')
         self.model_dir = os.path.join(self.exp_dir, 'model')
 
-        # GPU usage
+        # GPU usage 
         if args.gpu_ids is not None:
             os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_ids)
 

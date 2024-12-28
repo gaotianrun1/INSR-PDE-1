@@ -1,6 +1,17 @@
 import os
 from config import Config
 
+# Actively modify the third-party library: IMAGE 
+import sys
+from PIL import Image
+try:
+    from PIL import Resampling
+    # 检查是否存在ANTIALIAS属性，如果不存在则添加别名
+    if not hasattr(Image, 'ANTIALIAS'):
+        Image.ANTIALIAS = Resampling.LANCZOS
+except ImportError:
+    pass
+
 # create experiment config containing all hyperparameters
 cfg = Config("train")
 
