@@ -7,7 +7,7 @@ python main.py elasticity \
     -T 20 \
     -g 1 \
     --dt 0.1 \
-    --max_n_iter 200 \
+    --max_n_iter 20000 \
     --lr 1e-5 \
     --dim 2 \
     --energy 'arap' 'kinematics' 'collision_sphere' 'external' 'volume' \

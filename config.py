@@ -31,6 +31,8 @@ class Config(object):
             os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_ids)
 
         # load saved config if not training
+        # 如果当前是推理阶段（not self.is_train），尝试加载之前保存的配置文件（config.json），
+        # 并将其中的参数恢复到当前的 Config 对象中。如果配置文件不存在，则抛出错误
         if not self.is_train:
             if not os.path.exists(self.exp_dir):
                 raise RuntimeError(f"Experiment checkpoint {self.exp_dir} not exists.")
@@ -43,6 +45,8 @@ class Config(object):
                     self.__setattr__(k, v)
             return
 
+        # 如果指定的 ckpt（检查点）为空并且实验目录已存在，程序会询问用户是否覆盖现有实验，
+        # 用户输入 y 会删除现有的实验目录。
         if args.ckpt is None and os.path.exists(self.exp_dir):
             response = input('Experiment log/model already exists, overwrite? (y/n) ')
             if response != 'y':
@@ -62,8 +66,10 @@ class Config(object):
             json.dump(args.__dict__, f, indent=2)
 
     def parse(self):
-        """initiaize argument parser. Define default hyperparameters and collect from command-line arguments."""
-        parent_parser = argparse.ArgumentParser(add_help=False)
+        """
+        initiaize argument parser. Define default hyperparameters and collect from command-line arguments.
+        """
+        parent_parser = argparse.ArgumentParser(add_help=False) # 创建一个命令行参数解析器
         self._add_basic_config_(parent_parser)
         if self.is_train:
             self._add_network_config_(parent_parser)
@@ -73,15 +79,17 @@ class Config(object):
             self._add_recap_config_(parent_parser)
         
         parser = argparse.ArgumentParser(add_help=False)      
-        subparsers = parser.add_subparsers(dest="pde", required=True)
+        subparsers = parser.add_subparsers(dest="pde", required=True) # 表示解析的子命令结果会存储在pde变量中
+        # 分别创建子解析器，继承了parent的通用参数
         parser_adv = subparsers.add_parser("advection", parents=[parent_parser])
         parser_flu = subparsers.add_parser("fluid", parents=[parent_parser])
         parser_ela = subparsers.add_parser("elasticity", parents=[parent_parser])
-        if self.is_train:
+        if self.is_train: # 分别为每个子解析器添加特定于每个 PDE 类型的配置项
             self._add_advection_config_(parser_adv)
             self._add_fluid_config_(parser_flu)
             self._add_elasticity_config_(parser_ela)
-
+        
+        # 一个 ArgumentParser 对象可以添加命令行参数和选项，然后通过 parse_args() 方法解析命令行输入的参数。
         args = parser.parse_args()
         return parser, args
 
