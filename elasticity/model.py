@@ -120,7 +120,7 @@ class ElasticityModel(BaseModel):
         initialize all field to zeros
         通过 _sample_in_training 采样初始化数据，计算形变场的输出并计算损失。
         """
-        samples = self._sample_in_training(self.sample_resolution_init)
+        samples = self._sample_in_training(self.sample_resolution_init) # 初始化采样数量1000/100？
 
         out_wt = self.deformation_field(samples)
         loss_wt = torch.mean(out_wt ** 2)
