@@ -13,15 +13,16 @@ from .torchgp import normalize, boundary_faces, sample_surface, volume_weighted_
 import meshio
 
 class ElasticityModel(BaseModel):
+    # 继承自base中的baseModel,使用cfg文件进行配置
     def __init__(self, cfg):
         super().__init__(cfg)
         
         self.dim = cfg.dim
 
         # neural implicit network for deformation field
-        self.deformation_field = self._create_network(self.dim, self.dim)
-        self.deformation_field_prev = self._create_network(self.dim, self.dim)
-        self.deformation_field_prev_prev = self._create_network(self.dim, self.dim)
+        self.deformation_field = self._create_network(self.dim, self.dim) # 当前位移场
+        self.deformation_field_prev = self._create_network(self.dim, self.dim) # 上一时刻位移场
+        self.deformation_field_prev_prev = self._create_network(self.dim, self.dim) # 上上时刻位移场
         self._set_require_grads(self.deformation_field_prev, False)
         self._set_require_grads(self.deformation_field_prev_prev, False)
         with torch.no_grad():
@@ -33,6 +34,9 @@ class ElasticityModel(BaseModel):
 
 
     def _init_params(self, cfg):
+        """
+        根据cfg初始化模型参数
+        """
         # basic config
         self.energy = cfg.energy
         self.use_mesh = cfg.use_mesh
@@ -73,6 +77,7 @@ class ElasticityModel(BaseModel):
 
 
     def _init_mesh(self):
+        # TODO：这里网格是要用来干什么？是INSR的计算方法之一，还是用纯网格计算作为另一种思路？
         # setup mesh
         self.mesh = meshio.read(self.mesh_path)
         self.mesh_V = torch.FloatTensor(self.mesh.points).cuda()
@@ -98,6 +103,8 @@ class ElasticityModel(BaseModel):
         return {'deformation': self.deformation_field}
 
 
+    # 时间步装饰器，表示 initialize 函数会在每个时间步被调用。在初始化时，将前两时刻的形变场权重设置为当前时刻的形变场。
+    # @BaseModel._timestepping 是一个装饰器，用于对时间步的操作进行封装（例如增加时间步计数，保存检查点）
     @BaseModel._timestepping
     def initialize(self):
         self._initialize()
@@ -107,8 +114,12 @@ class ElasticityModel(BaseModel):
 
 
     @BaseModel._training_loop
+    # 通过装饰器 @BaseModel._training_loop，完成了损失的优化和网络参数更新
     def _initialize(self):
-        """initialize all field to zeros"""
+        """
+        initialize all field to zeros
+        通过 _sample_in_training 采样初始化数据，计算形变场的输出并计算损失。
+        """
         samples = self._sample_in_training(self.sample_resolution_init)
 
         out_wt = self.deformation_field(samples)
@@ -117,39 +128,48 @@ class ElasticityModel(BaseModel):
         return loss_dict
 
 
+    # 每个时间步后，更新前两时刻的形变场，并调用 _solve_deformation 进行形变求解。
     @BaseModel._timestepping
     def step(self):
         self.deformation_field_prev_prev.load_state_dict(self.deformation_field_prev.state_dict())
         self.deformation_field_prev.load_state_dict(self.deformation_field.state_dict())
 
         self._solve_deformation()
-
+        
+        
+    # 通过这两个装饰器，ElasticityModel 的训练过程被解耦成了损失计算（在 model.py 中定义）和优化管理（在装饰器中封装）
     @BaseModel._training_loop
     def _solve_deformation(self):
-        """projection step for velocity: u <- u - grad(p)"""
+        """
+        采用n-2，n-1，n三个时刻的形变场神经表达，计算基于变分时间积分方法的能量损失函数
+        通过优化损失函数来训练当前时刻的神经网络以表达形变场
+        其中前两者是之前的训练结果，网络参数冻结不参与优化
+        projection step for velocity: u <- u - grad(p)
+        """
 
         samples = self._sample_in_training(self.sample_resolution)
         fixed_samples, fixed_samples_right = self._sample_fixed_in_training(self.sample_resolution)
 
         with torch.no_grad():
-            q_prev = self.deformation_field_prev(samples) + samples
+            q_prev = self.deformation_field_prev(samples) + samples # 应该是从形变算位置
             q_prev_prev = self.deformation_field_prev_prev(samples) + samples               
         q = self.deformation_field(samples) + samples
         
+        # 通过样本计算当前时刻、前一时刻和上上时刻的形变，并通过时间步长 dt 计算速度（qdot）
         qdot = (q - q_prev) / self.dt
         qdot_prev = (q_prev - q_prev_prev) / self.dt
         
         # ARAP elasticity loss + kinematics loss + bc loss
-        jac_x, _ = jacobian(q, samples) # (N, 2, 2)
+        jac_x, _ = jacobian(q, samples) # (N, 2, 2) 描述了形变场在每个点的局部变化，元素Jij表示第i个坐标分量对第j个坐标分量的偏导
         U_x, S_x, V_x = torch.svd(jac_x)
 
-        E_arap = self.ratio_arap * torch.sum((S_x - 1.0) ** 2) 
-        E_volume = self.ratio_volume * torch.sum((torch.prod(S_x, dim=1) - 1) ** 2) 
-        E_kinematics = self.ratio_kinematics * torch.sum((qdot - qdot_prev) ** 2)
-        E_external = - self.dt * torch.sum(torch.mul(qdot, self.external_force.repeat(samples.shape[0], 1)))
+        E_arap = self.ratio_arap * torch.sum((S_x - 1.0) ** 2) # 常用于形变建模的损失，基于每个点刚性变形假设，避免非物理的拉伸压缩
+        E_volume = self.ratio_volume * torch.sum((torch.prod(S_x, dim=1) - 1) ** 2) # 惩罚导致物体体积变化的变形
+        E_kinematics = self.ratio_kinematics * torch.sum((qdot - qdot_prev) ** 2) # 惩罚速度在不同时间步的变化，以保证运动平滑
+        E_external = - self.dt * torch.sum(torch.mul(qdot, self.external_force.repeat(samples.shape[0], 1))) # 确保物体合理响应外力作用产生适当形变
 
         loss = 0
-        # Energy for the elastodynamics equation
+        # Energy for the elastodynamics equation 各部分能量项损失求和
         for l in self.energy:
             if l == 'arap':
                 loss = loss + E_arap
@@ -190,6 +210,7 @@ class ElasticityModel(BaseModel):
 
 
     def _vis_solve_deformation(self):
+        """形变场可视化"""
         fig = self.draw_field(self.vis_resolution, attr='deformation')
         self.tb.add_figure('stepU', fig, global_step=self.train_step)
 
@@ -222,6 +243,7 @@ class ElasticityModel(BaseModel):
     
     def _sample_fixed_in_training(self, resolution):
         # By default, the samples to be fixed is on the leftmost and rightmost side of square(2d) / cube (3d)
+        # 左右边界上固定点的采样
         fixed_samples = []
         fixed_samples_right = []
 
@@ -253,6 +275,7 @@ class ElasticityModel(BaseModel):
 ################# visualization during training #####################
 
     def _sample_in_visualization(self, resolution, sample_boundary = True):
+        # 为可视化生成采样点
         if self.use_mesh == True:
             samples = sample_surface(self.mesh_V, self.mesh_SF, resolution)[:, 0:self.dim]
             samples_V = self.mesh_V[:, 0:self.dim]
@@ -275,6 +298,7 @@ class ElasticityModel(BaseModel):
 
 
     def _sample_deformation_field(self, resolution=None, attr=None, to_numpy=True):
+        # 采样形变场并计算采样点的新位置。
         if self.sample_vis is not None:
             samples = self.sample_vis
         else:
@@ -289,6 +313,7 @@ class ElasticityModel(BaseModel):
 
 
     def draw_field(self, resolution, attr=None, return_samples=False):
+        # 绘制形变场的 2D 或 3D 图像
         sample_values = self._sample_deformation_field(resolution, attr, to_numpy=True)
         if attr == 'deformation':
             if self.dim == 2:

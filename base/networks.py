@@ -4,6 +4,19 @@ import numpy as np
 
 
 def get_network(cfg, in_features, out_features):
+    """_summary_
+
+    Args:
+        cfg (_type_): _description_
+        in_features (_type_): _description_
+        out_features (_type_): _description_
+
+    Raises:
+        NotImplementedError: _description_
+
+    Returns:
+        _type_: _description_
+    """
     if cfg.network == 'siren':
         return MLP(in_features, out_features, cfg.num_hidden_layers,
             cfg.hidden_features, nonlinearity=cfg.nonlinearity)

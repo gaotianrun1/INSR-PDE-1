@@ -1,5 +1,5 @@
 import os
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod # 抽象基类，强制子类实现某些方法
 import torch
 from tqdm import tqdm
 import shutil
@@ -25,6 +25,9 @@ class BaseModel(ABC):
         self.device = torch.device("cuda:0")
 
     def _create_network(self, input_dim, output_dim):
+        """
+        调用 get_network 函数创建网络，传入输入和输出的维度，返回构建的网络
+        """
         return get_network(self.cfg, input_dim, output_dim).to(self.device)
 
     @property
@@ -86,6 +89,10 @@ class BaseModel(ABC):
     
     @classmethod
     def _timestepping(cls, func):
+        """
+        为每个时间步调用的函数（如 initialize 或 step）插入了时间步管理逻辑。
+        包括时间步计数、日志创建和检查点保存。
+        """
         def warp(self):
             self.timestep += 1
             self._create_tb(f"t{self.timestep:03d}")
@@ -96,7 +103,8 @@ class BaseModel(ABC):
     @classmethod
     def _training_loop(cls, func):
         """a decorator function that warps a function inside a training loop
-
+        为训练循环中的函数（如 _initialize 或 _solve_deformation）插入了循环逻辑。
+        在每次训练迭代中，调用原始函数计算损失，并自动进行梯度优化和参数更新。
         Args:
             func (_type_): a function that returns a dict of losses, must have key "main".
         """
@@ -109,14 +117,14 @@ class BaseModel(ABC):
             self.train_step = 0
             for i in pbar:
                 # one gradient descent step
-                loss_dict = func(self, *args, **kwargs)
+                loss_dict = func(self, *args, **kwargs) # 无论被装饰函数参数怎样，装饰器都能正确处理。
                 self._update_network(loss_dict)
                 self.train_step += 1
 
                 loss_value = {k: v.item() for k, v in loss_dict.items()}
 
                 self.tb.add_scalars(tag, loss_value, global_step=i)
-                pbar.set_postfix(loss_value)
+                pbar.set_postfix(loss_value) # 进度条后缀
 
                 # optional visualization on tensorboard
                 if (i == 0 or (i + 1) % self.cfg.vis_frequency == 0) and hasattr(self, f"_vis{tag}"):
@@ -127,7 +135,7 @@ class BaseModel(ABC):
                 if loss_value["main"] < min_loss:
                     min_loss, accum_steps = loss_value["main"], 0
                 else:
-                    accum_steps += 1
+                    accum_steps += 1 # 当前损失下降的累计步数
 
                 if self.cfg.early_stop and self.optimizer.param_groups[0]['lr'] <= self.min_lr:
                     tqdm.write(f"early stopping at iteration {i}")
